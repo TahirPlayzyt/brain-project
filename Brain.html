@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Brain</title>
+<style>
+:root{--bg:#fafafa;--text:#111114;--muted:#7a7a84;--line:#e6e6ea;--accent:#e8457c;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#101012;--text:#f2f2f4;--muted:#8c8c96;--line:#26262c;--accent:#ff6b9a}}
+:root[data-theme="dark"]{--bg:#101012;--text:#f2f2f4;--muted:#8c8c96;--line:#26262c;--accent:#ff6b9a}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-weight:400}
+#app{display:flex;height:100%}
+#stage{flex:1;position:relative;min-width:0;min-height:0;overflow:hidden}
+#stage canvas{display:block;touch-action:none;cursor:grab}
+#title{position:absolute;top:20px;left:24px;font-size:15px;font-weight:500;letter-spacing:.02em;pointer-events:none}
+#hint{position:absolute;left:24px;bottom:18px;font-size:12px;color:var(--muted);pointer-events:none}
+#tip{position:absolute;pointer-events:none;background:var(--text);color:var(--bg);padding:3px 9px;border-radius:4px;font-size:12px;transform:translate(12px,-30px);opacity:0;transition:opacity .12s;white-space:nowrap}
+aside{width:300px;border-left:1px solid var(--line);padding:22px 24px;overflow-y:auto}
+h3{font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:20px 0 6px}
+h3:first-child{margin-top:0}
+.item{display:block;width:100%;padding:5px 0 5px 12px;border:0;border-left:2px solid transparent;background:none;color:var(--muted);font:inherit;font-size:14px;text-align:left;cursor:pointer}
+.item:hover{color:var(--text)}
+.item.on{color:var(--accent);border-left-color:var(--accent)}
+#info{margin-top:22px;padding-top:16px;border-top:1px solid var(--line);min-height:92px}
+#info b{display:block;font-weight:500;font-size:15px;margin-bottom:4px}
+#info span{font-size:14px;line-height:1.5;color:var(--muted)}
+.row{display:flex;gap:16px;margin-top:14px}
+.link{background:none;border:0;padding:0;color:var(--text);font:inherit;font-size:13px;cursor:pointer;text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--line)}
+@media (max-width:720px){body{overflow:auto}#app{flex-direction:column;height:auto;min-height:100%}#stage{flex:none;height:52vh}aside{width:100%;border-left:0;border-top:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage"><div id="title">Brain</div><div id="tip"></div><div id="hint">Drag to rotate · scroll to zoom · click a part</div></div>
+  <aside>
+    <div id="legend"></div>
+    <div id="info"><b>Select a part</b><span>Click the brain or choose from the list.</span></div>
+    <div class="row"><button class="link" id="inside">See inside</button><button class="link" id="spin">Pause</button><button class="link" id="reset">Reset</button></div>
+  </aside>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const REG={
+  frontal:["Frontal lobe","Planning, decisions, personality and speech."],
+  motor:["Motor cortex","Sends the commands that move your muscles."],
+  sensory:["Sensory cortex","Receives touch, pressure and temperature from the body."],
+  parietal:["Parietal lobe","Combines the senses and tracks where your body is in space."],
+  temporal:["Temporal lobe","Hearing, language understanding and memory."],
+  occipital:["Occipital lobe","Visual processing, at the back of the brain."],
+  corpus:["Corpus callosum","A thick band of fibers connecting the left and right halves."],
+  thalamus:["Thalamus","A relay station that routes sensory signals to the cortex."],
+  hypothalamus:["Hypothalamus","Controls hunger, thirst, body temperature and sleep."],
+  pituitary:["Pituitary gland","The “master gland” that releases hormones."],
+  hippocampus:["Hippocampus","Forms new memories and helps with navigation."],
+  amygdala:["Amygdala","Processes emotions, especially fear and threat."],
+  cerebellum:["Cerebellum","Balance, coordination and smooth movement."],
+  midbrain:["Midbrain","Eye movement, reflexes and alertness."],
+  pons:["Pons","Relays signals to the cerebellum; helps control breathing and sleep."],
+  medulla:["Medulla","Automatically controls heartbeat, breathing and blood pressure."]
+};
+const GROUPS=[["Cortex",["frontal","motor","sensory","parietal","temporal","occipital"]],["Deep structures",["corpus","thalamus","hypothalamus","pituitary","hippocampus","amygdala"]],["Hindbrain",["cerebellum","midbrain","pons","medulla"]]];
+const KEYS=["frontal","parietal","temporal","occipital","motor","sensory"];
+const DEEP=new Set(GROUPS[1][1]);
+const BASE=new THREE.Color(0xf0a9bd),HI=new THREE.Color(0xe8457c);
+
+const stage=document.getElementById("stage");
+const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+stage.appendChild(renderer.domElement);
+const el=renderer.domElement;
+const scene=new THREE.Scene();
+const cam=new THREE.PerspectiveCamera(40,1,.1,50);
+scene.add(new THREE.HemisphereLight(0xffffff,0x998899,.95));
+const dl=new THREE.DirectionalLight(0xffffff,.7);dl.position.set(3,4,5);scene.add(dl);
+const brain=new THREE.Group();scene.add(brain);
+const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+function g(x,y,z){return Math.sin(x*7.3+Math.sin(y*5.1+z*3.7))*Math.sin(y*6.9+Math.sin(z*5.3+x*4.1))*Math.sin(z*7.7+Math.sin(x*5.9+y*4.3))}
+
+// Cortex
+const geo=new THREE.SphereGeometry(1,150,104);geo.rotateZ(Math.PI/2);
+const pos=geo.attributes.position,N=pos.count;
+const regs=new Uint8Array(N),shade=new Float32Array(N),v=new THREE.Vector3();
+for(let i=0;i<N;i++){
+  v.fromBufferAttribute(pos,i);
+  const ux=v.x,uy=v.y,uz=v.z;
+  let X=ux*.82,Y=uy*.72,Z=uz*1.05;
+  if(Y<-.1)Y=-.1+(Y+.1)*.55;
+  X*=1+.1*Math.exp(-((Y+.3)**2)/.08)*Math.exp(-(Z*Z)/.3);
+  const f=Math.exp(-(X*X)/.003);
+  Y-=.18*f*clamp((Y+.25)*4,0,1);
+  X+=Math.sign(X)*.015*f;
+  const fv=Math.abs(g(X*2.2,Y*2.2,Z*2.2))*.65+Math.abs(g(X*4.5+3,Y*4.5,Z*4.5))*.35;
+  const d=.06*fv*(1-f);
+  pos.setXYZ(i,X+ux*d,Y+uy*d,Z+uz*d);
+  shade[i]=.8+.2*Math.min(1,fv*1.8);
+  regs[i]=(Y<-.12&&Z<.5&&Z>-.55&&Math.abs(X)>.2)?2:Z>.42?0:Z>.27?4:Z>.12?5:Z<-.5?3:1;
+}
+geo.computeVertexNormals();
+geo.setAttribute("color",new THREE.BufferAttribute(new Float32Array(N*3),3));
+const cMat=new THREE.MeshStandardMaterial({vertexColors:true,roughness:.5,transparent:true});
+const cerebrum=new THREE.Mesh(geo,cMat);cerebrum.userData.cerebrum=true;brain.add(cerebrum);
+
+// Other parts
+const M={},ALL=[];
+const mat=()=>new THREE.MeshStandardMaterial({color:BASE,roughness:.5});
+function add(key,geom,x,y,z,sx=1,sy=1,sz=1,rx=0){
+  const m=new THREE.Mesh(geom,mat());
+  m.position.set(x,y,z);m.scale.set(sx,sy,sz);m.rotation.x=rx;
+  m.userData.key=key;m.userData.deep=DEEP.has(key);
+  brain.add(m);(M[key]=M[key]||[]).push(m);ALL.push(m);
+}
+const sph=new THREE.SphereGeometry(1,32,24);
+const tube=(pts,r)=>new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts.map(p=>new THREE.Vector3(...p))),24,r,10);
+add("corpus",tube([[0,.04,.52],[0,.2,.36],[0,.27,0],[0,.2,-.4],[0,0,-.56]],.055),0,0,0,3,1,1);
+for(const s of[-1,1]){
+  add("thalamus",sph,s*.13,0,0,.13,.1,.17);
+  add("hippocampus",tube([[s*.36,-.22,.08],[s*.44,-.2,-.1],[s*.43,-.1,-.32]],.04),0,0,0);
+  add("amygdala",sph,s*.37,-.24,.18,.055,.055,.055);
+}
+add("hypothalamus",sph,0,-.14,.1,.07,.06,.07);
+add("pituitary",sph,0,-.27,.17,.04,.04,.04);
+// Cerebellum
+const cg=new THREE.SphereGeometry(1,64,48),cp=cg.attributes.position;
+for(let i=0;i<cp.count;i++){v.fromBufferAttribute(cp,i);const s=1+.03*Math.sin(v.y*34);cp.setXYZ(i,v.x*.55*s,v.y*.27*s,v.z*.38*s)}
+cg.computeVertexNormals();
+add("cerebellum",cg,0,-.4,-.72);
+// Brainstem
+add("midbrain",new THREE.CylinderGeometry(.1,.1,.2,24),0,-.36,-.02,1,1,1,.3);
+add("pons",sph,0,-.52,-.07,.15,.11,.14,.3);
+add("medulla",new THREE.CylinderGeometry(.11,.07,.34,24),0,-.74,-.14,1,1,1,.3);
+
+// Highlight
+let hover=null,selected=null,shown="__",inside=false,op=1;
+const col=geo.attributes.color,tmp=new THREE.Color();
+function paint(){
+  const act=hover||selected;
+  if(act===shown)return;
+  shown=act;
+  for(let i=0;i<N;i++){
+    tmp.copy(act===KEYS[regs[i]]?HI:BASE).multiplyScalar(shade[i]);
+    col.setXYZ(i,tmp.r,tmp.g,tmp.b);
+  }
+  col.needsUpdate=true;
+  for(const k in M)for(const m of M[k])m.material.color.copy(act===k?HI:BASE);
+}
+
+// UI
+const legend=document.getElementById("legend"),info=document.getElementById("info"),btns={};
+for(const [title,keys] of GROUPS){
+  const h=document.createElement("h3");h.textContent=title;legend.appendChild(h);
+  for(const k of keys){
+    const b=document.createElement("button");b.className="item";b.textContent=REG[k][0];
+    b.onclick=()=>select(selected===k?null:k);
+    b.onmouseenter=()=>{hover=k};b.onmouseleave=()=>{hover=null};
+    legend.appendChild(b);btns[k]=b;
+  }
+}
+const insideBtn=document.getElementById("inside");
+function setInside(on){inside=on;insideBtn.textContent=on?"Solid":"See inside"}
+insideBtn.onclick=()=>setInside(!inside);
+function select(k){
+  selected=k;
+  for(const x in btns)btns[x].classList.toggle("on",x===k);
+  if(k&&DEEP.has(k))setInside(true);
+  info.innerHTML=k?"<b>"+REG[k][0]+"</b><span>"+REG[k][1]+"</span>":"<b>Select a part</b><span>Click the brain or choose from the list.</span>";
+}
+const tip=document.getElementById("tip"),spin=document.getElementById("spin");let auto=true;
+spin.onclick=()=>{auto=!auto;spin.textContent=auto?"Pause":"Rotate"};
+
+// Controls
+const R0={y:-1.2,x:.12,z:4.5};
+let rotY=R0.y,rotX=R0.x,zoom=R0.z,drag=null,mouse=null,pending=false,pinch=0;
+const ptrs=new Map();
+el.addEventListener("pointerdown",e=>{el.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,e);drag={moved:0};el.style.cursor="grabbing";
+  if(ptrs.size===2){const [a,b]=[...ptrs.values()];pinch=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)}});
+el.addEventListener("pointermove",e=>{
+  const prev=ptrs.get(e.pointerId);
+  if(prev&&drag){
+    ptrs.set(e.pointerId,e);
+    if(ptrs.size===2){const [a,b]=[...ptrs.values()],d=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);zoom=clamp(zoom*(pinch/d),2.4,8);pinch=d;drag.moved+=10}
+    else{const dx=e.clientX-prev.clientX,dy=e.clientY-prev.clientY;rotY+=dx*.008;rotX=clamp(rotX+dy*.008,-1.3,1.3);drag.moved+=Math.abs(dx)+Math.abs(dy)}
+  }else{mouse={x:e.clientX,y:e.clientY};pending=true}
+});
+el.addEventListener("pointerup",e=>{
+  if(drag&&drag.moved<6&&ptrs.size<=1){mouse={x:e.clientX,y:e.clientY};pick(true)}
+  ptrs.delete(e.pointerId);if(!ptrs.size){drag=null;el.style.cursor="grab"}
+});
+el.addEventListener("pointercancel",e=>{ptrs.delete(e.pointerId);drag=null});
+el.addEventListener("pointerleave",()=>{if(!drag){hover=null;mouse=null;tip.style.opacity=0}});
+el.addEventListener("wheel",e=>{e.preventDefault();zoom=clamp(zoom+e.deltaY*.003,2.4,8)},{passive:false});
+document.getElementById("reset").onclick=()=>{rotY=R0.y;rotX=R0.x;zoom=R0.z;setInside(false);select(null)};
+
+const ray=new THREE.Raycaster(),ndc=new THREE.Vector2();
+function pick(click){
+  if(!mouse)return;
+  const r=el.getBoundingClientRect();
+  ndc.set((mouse.x-r.left)/r.width*2-1,-((mouse.y-r.top)/r.height)*2+1);
+  ray.setFromCamera(ndc,cam);
+  const objs=ALL.filter(m=>inside||!m.userData.deep);
+  if(!inside)objs.push(cerebrum);
+  const h=ray.intersectObjects(objs)[0];
+  const k=h?(h.object.userData.cerebrum?KEYS[regs[h.face.a]]:h.object.userData.key):null;
+  if(click){select(k===selected?null:k)}
+  else{
+    hover=k;el.style.cursor=k?"pointer":"grab";
+    if(k){tip.textContent=REG[k][0];tip.style.left=(mouse.x-r.left)+"px";tip.style.top=(mouse.y-r.top)+"px";tip.style.opacity=1}else tip.style.opacity=0;
+  }
+}
+function resize(){const w=stage.clientWidth,h=stage.clientHeight;renderer.setSize(w,h);cam.aspect=w/h;cam.updateProjectionMatrix()}
+new ResizeObserver(resize).observe(stage);resize();
+
+function loop(){
+  requestAnimationFrame(loop);
+  if(auto&&!drag)rotY+=.003;
+  brain.rotation.set(rotX,rotY,0);
+  op+=((inside?.12:1)-op)*.15;
+  cMat.opacity=op;cMat.depthWrite=op>.97;
+  for(const m of ALL)if(m.userData.deep)m.visible=op<.97;
+  cam.position.z+=(zoom-cam.position.z)*.12;cam.lookAt(0,-.1,0);
+  brain.updateMatrixWorld();
+  if(pending&&!drag){pending=false;pick(false)}
+  paint();
+  renderer.render(scene,cam);
+}
+paint();loop();
+</script>
+</body>
+</html>
